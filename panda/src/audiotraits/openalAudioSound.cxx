@@ -217,6 +217,8 @@ stop() {
     _stream_queued.resize(0);
   }
 
+  _paused = false;
+
   _manager->stopping_sound(this);
   release_sound_data(false);
 }
@@ -564,13 +566,18 @@ push_fresh_buffers() {
 }
 
 /**
- * The next time you call play, the sound will start from the specified
- * offset.
+ * Sets the offset within the sound.  If the sound is currently playing, its
+ * position is updated immediately.
  */
 void OpenALAudioSound::
 set_time(PN_stdfloat time) {
   ReMutexHolder holder(OpenALAudioManager::_lock);
   _start_time = time;
+
+  if (is_playing()) {
+    // Ensure that the position is updated immediately.
+    play();
+  }
 }
 
 /**
@@ -823,11 +830,13 @@ set_active(bool active) {
     } else {
       // ...deactivate the sound.
       if (status()==PLAYING) {
-        if (_loop_count==0) {
-          // ...we're pausing a looping sound.
-          _paused=true;
-        }
+        // Store off the current time so we can resume from where we paused.
+        _start_time = get_time();
         stop();
+        if (_loop_count == 0) {
+          // ...we're pausing a looping sound.
+          _paused = true;
+        }
       }
     }
   }

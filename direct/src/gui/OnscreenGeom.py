@@ -4,12 +4,7 @@ __all__ = ['OnscreenGeom']
 
 from panda3d.core import *
 from direct.showbase.DirectObject import DirectObject
-import sys
 
-if sys.version_info >= (3, 0):
-    stringType = str
-else:
-    stringType = basestring
 
 class OnscreenGeom(DirectObject, NodePath):
     def __init__(self, geom = None,
@@ -47,8 +42,9 @@ class OnscreenGeom(DirectObject, NodePath):
         """
         # We ARE a node path.  Initially, we're an empty node path.
         NodePath.__init__(self)
-        if parent == None:
-            parent = aspect2d
+        if parent is None:
+            from direct.showbase import ShowBaseGlobal
+            parent = ShowBaseGlobal.aspect2d
 
         self.setGeom(geom, parent = parent, sort = sort, color = color)
 
@@ -98,7 +94,7 @@ class OnscreenGeom(DirectObject, NodePath):
         # Assign geometry
         if isinstance(geom, NodePath):
             self.assign(geom.copyTo(parent, sort))
-        elif isinstance(geom, stringType):
+        elif isinstance(geom, str):
             self.assign(loader.loadModel(geom))
             self.reparentTo(parent, sort)
 

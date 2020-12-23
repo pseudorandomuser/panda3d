@@ -10,6 +10,9 @@
 
 #ifdef HAVE_PYTHON
 
+#define _STRINGIFY_VERSION(a, b) (#a "." #b)
+#define STRINGIFY_VERSION(a, b) _STRINGIFY_VERSION(a, b)
+
 using std::string;
 
 /**
@@ -156,8 +159,7 @@ PyObject *Dtool_Raise_AssertionError() {
 #else
   PyObject *message = PyString_FromString(notify->get_assert_error_message().c_str());
 #endif
-  Py_INCREF(PyExc_AssertionError);
-  PyErr_Restore(PyExc_AssertionError, message, nullptr);
+  PyErr_SetObject(PyExc_AssertionError, message);
   notify->clear_assert_failed();
   return nullptr;
 }
@@ -166,14 +168,7 @@ PyObject *Dtool_Raise_AssertionError() {
  * Raises a TypeError with the given message, and returns NULL.
  */
 PyObject *Dtool_Raise_TypeError(const char *message) {
-  // PyErr_Restore is what PyErr_SetString would have ended up calling
-  // eventually anyway, so we might as well just get to the point.
-  Py_INCREF(PyExc_TypeError);
-#if PY_MAJOR_VERSION >= 3
-  PyErr_Restore(PyExc_TypeError, PyUnicode_FromString(message), nullptr);
-#else
-  PyErr_Restore(PyExc_TypeError, PyString_FromString(message), nullptr);
-#endif
+  PyErr_SetString(PyExc_TypeError, message);
   return nullptr;
 }
 
@@ -194,8 +189,7 @@ PyObject *Dtool_Raise_ArgTypeError(PyObject *obj, int param, const char *functio
     function_name, param, type_name,
     Py_TYPE(obj)->tp_name);
 
-  Py_INCREF(PyExc_TypeError);
-  PyErr_Restore(PyExc_TypeError, message, nullptr);
+  PyErr_SetObject(PyExc_TypeError, message);
   return nullptr;
 }
 
@@ -214,8 +208,7 @@ PyObject *Dtool_Raise_AttributeError(PyObject *obj, const char *attribute) {
     "'%.100s' object has no attribute '%.200s'",
     Py_TYPE(obj)->tp_name, attribute);
 
-  Py_INCREF(PyExc_AttributeError);
-  PyErr_Restore(PyExc_AttributeError, message, nullptr);
+  PyErr_SetObject(PyExc_AttributeError, message);
   return nullptr;
 }
 
@@ -531,6 +524,8 @@ Dtool_TypeMap *Dtool_GetGlobalTypeMap() {
   }
 }
 
+#define PY_MAJOR_VERSION_STR #PY_MAJOR_VERSION "." #PY_MINOR_VERSION
+
 #if PY_MAJOR_VERSION >= 3
 PyObject *Dtool_PyModuleInitHelper(const LibraryDef *defs[], PyModuleDef *module_def) {
 #else
@@ -538,15 +533,18 @@ PyObject *Dtool_PyModuleInitHelper(const LibraryDef *defs[], const char *modulen
 #endif
   // Check the version so we can print a helpful error if it doesn't match.
   string version = Py_GetVersion();
+  size_t version_len = version.find('.', 2);
+  if (version_len != string::npos) {
+    version.resize(version_len);
+  }
 
-  if (version[0] != '0' + PY_MAJOR_VERSION ||
-      version[2] != '0' + PY_MINOR_VERSION) {
+  if (version != STRINGIFY_VERSION(PY_MAJOR_VERSION, PY_MINOR_VERSION)) {
     // Raise a helpful error message.  We can safely do this because the
     // signature and behavior for PyErr_SetString has remained consistent.
     std::ostringstream errs;
     errs << "this module was compiled for Python "
          << PY_MAJOR_VERSION << "." << PY_MINOR_VERSION << ", which is "
-         << "incompatible with Python " << version.substr(0, 3);
+         << "incompatible with Python " << version;
     string error = errs.str();
     PyErr_SetString(PyExc_ImportError, error.c_str());
     return nullptr;
@@ -757,7 +755,7 @@ PyObject *copy_from_make_copy(PyObject *self, PyObject *noargs) {
  */
 PyObject *copy_from_copy_constructor(PyObject *self, PyObject *noargs) {
   PyObject *callable = (PyObject *)Py_TYPE(self);
-  return _PyObject_FastCall(callable, &self, 1);
+  return PyObject_CallOneArg(callable, self);
 }
 
 /**

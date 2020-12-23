@@ -351,6 +351,12 @@ protected:
                                        int &internal_vertices,
                                        int pipeline_stage,
                                        Thread *current_thread) const;
+  virtual void compute_external_bounds(CPT(BoundingVolume) &external_bounds,
+                                       BoundingVolume::BoundsType btype,
+                                       const BoundingVolume **volumes,
+                                       size_t num_volumes,
+                                       int pipeline_stage,
+                                       Thread *current_thread) const;
   virtual void parents_changed();
   virtual void children_changed();
   virtual void transform_changed();
@@ -358,8 +364,8 @@ protected:
   virtual void draw_mask_changed();
 
   typedef pmap<PandaNode *, PandaNode *> InstanceMap;
-  virtual PT(PandaNode) r_copy_subgraph(InstanceMap &inst_map,
-                                        Thread *current_thread) const;
+  PT(PandaNode) r_copy_subgraph(InstanceMap &inst_map,
+                                Thread *current_thread) const;
   virtual void r_copy_children(const PandaNode *from, InstanceMap &inst_map,
                                Thread *current_thread);
 
@@ -532,9 +538,7 @@ private:
   };
   PT(PythonTagData) _python_tag_data;
 
-#ifndef NDEBUG
-  unsigned int _unexpected_change_flags;
-#endif // !NDEBUG
+  unsigned int _unexpected_change_flags = 0;
 
   // This is the data that must be cycled between pipeline stages.
 
@@ -567,11 +571,6 @@ private:
     // likely to change as often: tags, collide mask.
 
     INLINE void set_fancy_bit(int bits, bool value);
-
-#ifdef HAVE_PYTHON
-    void inc_py_refs();
-    void dec_py_refs();
-#endif
 
     CPT(RenderEffects) _effects;
 

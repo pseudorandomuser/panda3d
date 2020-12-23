@@ -170,6 +170,7 @@ static const string default_vshader =
   "out vec2 texcoord;\n"
   "out vec4 color;\n"
 #else
+  "#version 100\n"
   "precision mediump float;\n"
   "attribute vec4 p3d_Vertex;\n"
   "attribute vec4 p3d_Color;\n"
@@ -240,6 +241,7 @@ static const string default_fshader =
   "uniform sampler2D p3d_Texture0;\n"
   "uniform vec4 p3d_TexAlphaOnly;\n"
 #else
+  "#version 100\n"
   "precision mediump float;\n"
   "varying vec2 texcoord;\n"
   "varying lowp vec4 color;\n"
@@ -606,10 +608,10 @@ reset() {
   GraphicsStateGuardian::reset();
 
   // Build _inv_state_mask as a mask of 1's where we don't care, and 0's where
-  // we do care, about the state.  _inv_state_mask =
-  // RenderState::SlotMask::all_on();
+  // we do care, about the state.
+#ifndef OPENGLES_1
   _inv_state_mask.clear_bit(ShaderAttrib::get_class_slot());
-  _inv_state_mask.clear_bit(AlphaTestAttrib::get_class_slot());
+#endif
   _inv_state_mask.clear_bit(AntialiasAttrib::get_class_slot());
   _inv_state_mask.clear_bit(ClipPlaneAttrib::get_class_slot());
   _inv_state_mask.clear_bit(ColorAttrib::get_class_slot());
@@ -619,20 +621,29 @@ reset() {
   _inv_state_mask.clear_bit(DepthTestAttrib::get_class_slot());
   _inv_state_mask.clear_bit(DepthWriteAttrib::get_class_slot());
   _inv_state_mask.clear_bit(RenderModeAttrib::get_class_slot());
-  _inv_state_mask.clear_bit(RescaleNormalAttrib::get_class_slot());
-  _inv_state_mask.clear_bit(ShadeModelAttrib::get_class_slot());
   _inv_state_mask.clear_bit(TransparencyAttrib::get_class_slot());
   _inv_state_mask.clear_bit(ColorWriteAttrib::get_class_slot());
   _inv_state_mask.clear_bit(ColorBlendAttrib::get_class_slot());
+#if !defined(OPENGLES) || defined(OPENGLES_1)
   _inv_state_mask.clear_bit(LogicOpAttrib::get_class_slot());
+#endif
   _inv_state_mask.clear_bit(TextureAttrib::get_class_slot());
-  _inv_state_mask.clear_bit(TexGenAttrib::get_class_slot());
   _inv_state_mask.clear_bit(TexMatrixAttrib::get_class_slot());
-  _inv_state_mask.clear_bit(MaterialAttrib::get_class_slot());
-  _inv_state_mask.clear_bit(LightAttrib::get_class_slot());
   _inv_state_mask.clear_bit(StencilAttrib::get_class_slot());
-  _inv_state_mask.clear_bit(FogAttrib::get_class_slot());
   _inv_state_mask.clear_bit(ScissorAttrib::get_class_slot());
+
+  // We only care about this state if we are using the fixed-function pipeline.
+#ifdef SUPPORT_FIXED_FUNCTION
+  if (has_fixed_function_pipeline()) {
+    _inv_state_mask.clear_bit(AlphaTestAttrib::get_class_slot());
+    _inv_state_mask.clear_bit(RescaleNormalAttrib::get_class_slot());
+    _inv_state_mask.clear_bit(ShadeModelAttrib::get_class_slot());
+    _inv_state_mask.clear_bit(TexGenAttrib::get_class_slot());
+    _inv_state_mask.clear_bit(MaterialAttrib::get_class_slot());
+    _inv_state_mask.clear_bit(LightAttrib::get_class_slot());
+    _inv_state_mask.clear_bit(FogAttrib::get_class_slot());
+  }
+#endif
 
   // Output the vendor and version strings.
   query_gl_version();
@@ -1304,10 +1315,12 @@ reset() {
   // Note that these extensions only offer support for GL_BGRA, not GL_BGR.
   _supports_bgr = has_extension("GL_EXT_texture_format_BGRA8888") ||
                   has_extension("GL_APPLE_texture_format_BGRA8888");
+  _supports_bgra_read = has_extension("GL_EXT_read_format_bgra");
 #else
   // In regular OpenGL, we have both GL_BGRA and GL_BGR.
   _supports_bgr =
     is_at_least_gl_version(1, 2) || has_extension("GL_EXT_bgra");
+  _supports_bgra_read = _supports_bgr;
 #endif
 
 #ifdef SUPPORT_FIXED_FUNCTION
@@ -1776,9 +1789,9 @@ reset() {
         _shader_caps._active_gprofile = (int)CG_PROFILE_GLSLG;
       }
     }
-    _shader_caps._ultimate_vprofile = (int)CG_PROFILE_VP40;
-    _shader_caps._ultimate_fprofile = (int)CG_PROFILE_FP40;
-    _shader_caps._ultimate_gprofile = (int)CG_PROFILE_GPU_GP;
+    _shader_caps._ultimate_vprofile = (int)CG_PROFILE_GLSLV;
+    _shader_caps._ultimate_fprofile = (int)CG_PROFILE_GLSLF;
+    _shader_caps._ultimate_gprofile = (int)CG_PROFILE_GLSLG;
 
     // Bug workaround for radeons.
     if (_shader_caps._active_fprofile == CG_PROFILE_ARBFP1) {
@@ -1907,6 +1920,8 @@ reset() {
          get_extension_func("glUniform3uiv");
       _glUniform4uiv = (PFNGLUNIFORM4UIVPROC)
          get_extension_func("glUniform4uiv");
+      _glVertexAttribI4ui = (PFNGLVERTEXATTRIBI4UIPROC)
+         get_extension_func("glVertexAttribI4ui");
 
     } else if (has_extension("GL_EXT_gpu_shader4")) {
       _glBindFragDataLocation = (PFNGLBINDFRAGDATALOCATIONPROC)
@@ -1921,10 +1936,13 @@ reset() {
          get_extension_func("glUniform3uivEXT");
       _glUniform4uiv = (PFNGLUNIFORM4UIVPROC)
          get_extension_func("glUniform4uivEXT");
+      _glVertexAttribI4ui = (PFNGLVERTEXATTRIBI4UIPROC)
+         get_extension_func("glVertexAttribI4uiEXT");
 
     } else {
       _glBindFragDataLocation = nullptr;
       _glVertexAttribIPointer = nullptr;
+      _glVertexAttribI4ui = nullptr;
     }
     if (is_at_least_gl_version(4, 1) ||
         has_extension("GL_ARB_vertex_attrib_64bit")) {
@@ -1953,8 +1971,11 @@ reset() {
        get_extension_func("glVertexAttribPointerARB");
 
     _glBindFragDataLocation = nullptr;
+    _glVertexAttribI4ui = nullptr;
     _glVertexAttribIPointer = nullptr;
     _glVertexAttribLPointer = nullptr;
+  } else {
+    _glVertexAttribI4ui = nullptr;
   }
 #endif
 
@@ -2001,8 +2022,11 @@ reset() {
   if (is_at_least_gles_version(3, 0)) {
     _glVertexAttribIPointer = (PFNGLVERTEXATTRIBIPOINTERPROC)
       get_extension_func("glVertexAttribIPointer");
+    _glVertexAttribI4ui = (PFNGLVERTEXATTRIBI4UIPROC)
+      get_extension_func("glVertexAttribI4ui");
   } else {
     _glVertexAttribIPointer = nullptr;
+    _glVertexAttribI4ui = nullptr;
   }
 
   if (has_extension("GL_EXT_blend_func_extended")) {
@@ -2520,6 +2544,20 @@ reset() {
 
   } else {
     _glDrawBuffers = nullptr;
+  }
+#endif
+
+#if defined(OPENGLES) && !defined(OPENGLES_1)
+  if (is_at_least_gles_version(3, 0)) {
+    _glReadBuffer = (PFNGLREADBUFFERPROC)
+      get_extension_func("glReadBuffer");
+
+  } else if (has_extension("GL_NV_read_buffer")) {
+    _glReadBuffer = (PFNGLREADBUFFERPROC)
+      get_extension_func("glReadBufferNV");
+
+  } else {
+    _glReadBuffer = nullptr;
   }
 #endif
 
@@ -3976,12 +4014,6 @@ prepare_lens() {
   }
 #endif
 
-#ifndef OPENGLES_1
-  if (_current_shader_context) {
-    _current_shader_context->issue_parameters(Shader::SSD_transform);
-  }
-#endif
-
   return true;
 }
 
@@ -4134,6 +4166,7 @@ end_frame(Thread *current_thread) {
     _current_shader = nullptr;
     _current_shader_context = nullptr;
   }
+  _state_shader = nullptr;
 #endif
 
   // Respecify the active texture next frame, for good measure.
@@ -4259,7 +4292,7 @@ end_frame(Thread *current_thread) {
 bool CLP(GraphicsStateGuardian)::
 begin_draw_primitives(const GeomPipelineReader *geom_reader,
                       const GeomVertexDataPipelineReader *data_reader,
-                      bool force) {
+                      size_t num_instances, bool force) {
 #ifndef NDEBUG
   if (GLCAT.is_spam()) {
     GLCAT.spam() << "begin_draw_primitives: " << *(data_reader->get_object()) << "\n";
@@ -4276,10 +4309,12 @@ begin_draw_primitives(const GeomPipelineReader *geom_reader,
   }
 #endif
 
-  if (!GraphicsStateGuardian::begin_draw_primitives(geom_reader, data_reader, force)) {
+  if (!GraphicsStateGuardian::begin_draw_primitives(geom_reader, data_reader, num_instances, force)) {
     return false;
   }
   nassertr(_data_reader != nullptr, false);
+
+  _instance_count = _supports_geometry_instancing ? num_instances : 1;
 
   _geom_display_list = 0;
 
@@ -4828,7 +4863,7 @@ draw_triangles(const GeomPrimitivePipelineReader *reader, bool force) {
       }
 
 #ifndef OPENGLES_1
-      if (_supports_geometry_instancing && _instance_count > 0) {
+      if (_instance_count != 1) {
         _glDrawElementsInstanced(GL_TRIANGLES, num_vertices,
                                  get_numeric_type(reader->get_index_type()),
                                  client_pointer, _instance_count);
@@ -4844,7 +4879,7 @@ draw_triangles(const GeomPrimitivePipelineReader *reader, bool force) {
       }
     } else {
 #ifndef OPENGLES_1
-      if (_supports_geometry_instancing && _instance_count > 0) {
+      if (_instance_count != 1) {
         _glDrawArraysInstanced(GL_TRIANGLES,
                                reader->get_first_vertex(),
                                num_vertices, _instance_count);
@@ -4894,7 +4929,7 @@ draw_triangles_adj(const GeomPrimitivePipelineReader *reader, bool force) {
         return false;
       }
 
-      if (_supports_geometry_instancing && _instance_count > 0) {
+      if (_instance_count != 1) {
         _glDrawElementsInstanced(GL_TRIANGLES_ADJACENCY, num_vertices,
                                  get_numeric_type(reader->get_index_type()),
                                  client_pointer, _instance_count);
@@ -4907,7 +4942,7 @@ draw_triangles_adj(const GeomPrimitivePipelineReader *reader, bool force) {
                              client_pointer);
       }
     } else {
-      if (_supports_geometry_instancing && _instance_count > 0) {
+      if (_instance_count != 1) {
         _glDrawArraysInstanced(GL_TRIANGLES_ADJACENCY,
                                reader->get_first_vertex(),
                                num_vertices, _instance_count);
@@ -4959,7 +4994,7 @@ draw_tristrips(const GeomPrimitivePipelineReader *reader, bool force) {
           return false;
         }
 #ifndef OPENGLES_1
-        if (_supports_geometry_instancing && _instance_count > 0) {
+        if (_instance_count != 1) {
           _glDrawElementsInstanced(GL_TRIANGLE_STRIP, num_vertices,
                                    get_numeric_type(reader->get_index_type()),
                                    client_pointer, _instance_count);
@@ -4975,7 +5010,7 @@ draw_tristrips(const GeomPrimitivePipelineReader *reader, bool force) {
         }
       } else {
 #ifndef OPENGLES_1
-        if (_supports_geometry_instancing && _instance_count > 0) {
+        if (_instance_count != 1) {
           _glDrawArraysInstanced(GL_TRIANGLE_STRIP,
                                  reader->get_first_vertex(),
                                  num_vertices, _instance_count);
@@ -5009,7 +5044,7 @@ draw_tristrips(const GeomPrimitivePipelineReader *reader, bool force) {
         for (size_t i = 0; i < ends.size(); i++) {
           _vertices_tristrip_pcollector.add_level(ends[i] - start);
 #ifndef OPENGLES_1
-          if (_supports_geometry_instancing && _instance_count > 0) {
+          if (_instance_count != 1) {
             _glDrawElementsInstanced(GL_TRIANGLE_STRIP, ends[i] - start,
                                      get_numeric_type(reader->get_index_type()),
                                      client_pointer + start * index_stride,
@@ -5031,7 +5066,7 @@ draw_tristrips(const GeomPrimitivePipelineReader *reader, bool force) {
         for (size_t i = 0; i < ends.size(); i++) {
           _vertices_tristrip_pcollector.add_level(ends[i] - start);
 #ifndef OPENGLES_1
-          if (_supports_geometry_instancing && _instance_count > 0) {
+          if (_instance_count != 1) {
             _glDrawArraysInstanced(GL_TRIANGLE_STRIP, first_vertex + start,
                                    ends[i] - start, _instance_count);
           } else
@@ -5089,7 +5124,7 @@ draw_tristrips_adj(const GeomPrimitivePipelineReader *reader, bool force) {
         if (!setup_primitive(client_pointer, reader, force)) {
           return false;
         }
-        if (_supports_geometry_instancing && _instance_count > 0) {
+        if (_instance_count != 1) {
           _glDrawElementsInstanced(GL_TRIANGLE_STRIP_ADJACENCY, num_vertices,
                                    get_numeric_type(reader->get_index_type()),
                                    client_pointer, _instance_count);
@@ -5102,7 +5137,7 @@ draw_tristrips_adj(const GeomPrimitivePipelineReader *reader, bool force) {
                                client_pointer);
         }
       } else {
-        if (_supports_geometry_instancing && _instance_count > 0) {
+        if (_instance_count != 1) {
           _glDrawArraysInstanced(GL_TRIANGLE_STRIP_ADJACENCY,
                                  reader->get_first_vertex(),
                                  num_vertices, _instance_count);
@@ -5135,7 +5170,7 @@ draw_tristrips_adj(const GeomPrimitivePipelineReader *reader, bool force) {
         unsigned int start = 0;
         for (size_t i = 0; i < ends.size(); i++) {
           _vertices_tristrip_pcollector.add_level(ends[i] - start);
-          if (_supports_geometry_instancing && _instance_count > 0) {
+          if (_instance_count != 1) {
             _glDrawElementsInstanced(GL_TRIANGLE_STRIP_ADJACENCY, ends[i] - start,
                                      get_numeric_type(reader->get_index_type()),
                                      client_pointer + start * index_stride,
@@ -5154,7 +5189,7 @@ draw_tristrips_adj(const GeomPrimitivePipelineReader *reader, bool force) {
         int first_vertex = reader->get_first_vertex();
         for (size_t i = 0; i < ends.size(); i++) {
           _vertices_tristrip_pcollector.add_level(ends[i] - start);
-          if (_supports_geometry_instancing && _instance_count > 0) {
+          if (_instance_count != 1) {
             _glDrawArraysInstanced(GL_TRIANGLE_STRIP_ADJACENCY, first_vertex + start,
                                    ends[i] - start, _instance_count);
           } else {
@@ -5212,7 +5247,7 @@ draw_trifans(const GeomPrimitivePipelineReader *reader, bool force) {
       for (size_t i = 0; i < ends.size(); i++) {
         _vertices_trifan_pcollector.add_level(ends[i] - start);
 #ifndef OPENGLES_1
-        if (_supports_geometry_instancing && _instance_count > 0) {
+        if (_instance_count != 1) {
           _glDrawElementsInstanced(GL_TRIANGLE_FAN, ends[i] - start,
                                    get_numeric_type(reader->get_index_type()),
                                    client_pointer + start * index_stride,
@@ -5233,7 +5268,7 @@ draw_trifans(const GeomPrimitivePipelineReader *reader, bool force) {
       for (size_t i = 0; i < ends.size(); i++) {
         _vertices_trifan_pcollector.add_level(ends[i] - start);
 #ifndef OPENGLES_1
-        if (_supports_geometry_instancing && _instance_count > 0) {
+        if (_instance_count != 1) {
           _glDrawArraysInstanced(GL_TRIANGLE_FAN, first_vertex + start,
                                  ends[i] - start, _instance_count);
         } else
@@ -5291,7 +5326,7 @@ draw_patches(const GeomPrimitivePipelineReader *reader, bool force) {
       }
 
 #ifndef OPENGLES_1
-      if (_supports_geometry_instancing && _instance_count > 0) {
+      if (_instance_count != 1) {
         _glDrawElementsInstanced(GL_PATCHES, num_vertices,
                                  get_numeric_type(reader->get_index_type()),
                                  client_pointer, _instance_count);
@@ -5307,7 +5342,7 @@ draw_patches(const GeomPrimitivePipelineReader *reader, bool force) {
       }
     } else {
 #ifndef OPENGLES_1
-      if (_supports_geometry_instancing && _instance_count > 0) {
+      if (_instance_count != 1) {
         _glDrawArraysInstanced(GL_PATCHES,
                                reader->get_first_vertex(),
                                num_vertices, _instance_count);
@@ -5357,7 +5392,7 @@ draw_lines(const GeomPrimitivePipelineReader *reader, bool force) {
         return false;
       }
 #ifndef OPENGLES_1
-      if (_supports_geometry_instancing && _instance_count > 0) {
+      if (_instance_count != 1) {
         _glDrawElementsInstanced(GL_LINES, num_vertices,
                                  get_numeric_type(reader->get_index_type()),
                                  client_pointer, _instance_count);
@@ -5373,7 +5408,7 @@ draw_lines(const GeomPrimitivePipelineReader *reader, bool force) {
       }
     } else {
 #ifndef OPENGLES_1
-      if (_supports_geometry_instancing && _instance_count > 0) {
+      if (_instance_count != 1) {
         _glDrawArraysInstanced(GL_LINES,
                                reader->get_first_vertex(),
                                num_vertices, _instance_count);
@@ -5421,7 +5456,7 @@ draw_lines_adj(const GeomPrimitivePipelineReader *reader, bool force) {
       if (!setup_primitive(client_pointer, reader, force)) {
         return false;
       }
-      if (_supports_geometry_instancing && _instance_count > 0) {
+      if (_instance_count != 1) {
         _glDrawElementsInstanced(GL_LINES_ADJACENCY, num_vertices,
                                  get_numeric_type(reader->get_index_type()),
                                  client_pointer, _instance_count);
@@ -5434,7 +5469,7 @@ draw_lines_adj(const GeomPrimitivePipelineReader *reader, bool force) {
                              client_pointer);
       }
     } else {
-      if (_supports_geometry_instancing && _instance_count > 0) {
+      if (_instance_count != 1) {
         _glDrawArraysInstanced(GL_LINES_ADJACENCY,
                                reader->get_first_vertex(),
                                num_vertices, _instance_count);
@@ -5493,7 +5528,7 @@ draw_linestrips(const GeomPrimitivePipelineReader *reader, bool force) {
         return false;
       }
 #ifndef OPENGLES_1
-      if (_supports_geometry_instancing && _instance_count > 0) {
+      if (_instance_count != 1) {
         _glDrawElementsInstanced(GL_LINE_STRIP, num_vertices,
                                  get_numeric_type(reader->get_index_type()),
                                  client_pointer, _instance_count);
@@ -5533,7 +5568,7 @@ draw_linestrips(const GeomPrimitivePipelineReader *reader, bool force) {
         for (size_t i = 0; i < ends.size(); i++) {
           _vertices_other_pcollector.add_level(ends[i] - start);
 #ifndef OPENGLES_1
-          if (_supports_geometry_instancing && _instance_count > 0) {
+          if (_instance_count != 1) {
             _glDrawElementsInstanced(GL_LINE_STRIP, ends[i] - start,
                                      get_numeric_type(reader->get_index_type()),
                                      client_pointer + start * index_stride,
@@ -5555,7 +5590,7 @@ draw_linestrips(const GeomPrimitivePipelineReader *reader, bool force) {
         for (size_t i = 0; i < ends.size(); i++) {
           _vertices_other_pcollector.add_level(ends[i] - start);
 #ifndef OPENGLES_1
-          if (_supports_geometry_instancing && _instance_count > 0) {
+          if (_instance_count != 1) {
             _glDrawArraysInstanced(GL_LINE_STRIP, first_vertex + start,
                                    ends[i] - start, _instance_count);
           } else
@@ -5613,7 +5648,7 @@ draw_linestrips_adj(const GeomPrimitivePipelineReader *reader, bool force) {
       if (!setup_primitive(client_pointer, reader, force)) {
         return false;
       }
-      if (_supports_geometry_instancing && _instance_count > 0) {
+      if (_instance_count != 1) {
         _glDrawElementsInstanced(GL_LINE_STRIP_ADJACENCY, num_vertices,
                                  get_numeric_type(reader->get_index_type()),
                                  client_pointer, _instance_count);
@@ -5648,7 +5683,7 @@ draw_linestrips_adj(const GeomPrimitivePipelineReader *reader, bool force) {
         unsigned int start = 0;
         for (size_t i = 0; i < ends.size(); i++) {
           _vertices_other_pcollector.add_level(ends[i] - start);
-          if (_supports_geometry_instancing && _instance_count > 0) {
+          if (_instance_count != 1) {
             _glDrawElementsInstanced(GL_LINE_STRIP_ADJACENCY, ends[i] - start,
                                      get_numeric_type(reader->get_index_type()),
                                      client_pointer + start * index_stride,
@@ -5667,7 +5702,7 @@ draw_linestrips_adj(const GeomPrimitivePipelineReader *reader, bool force) {
         int first_vertex = reader->get_first_vertex();
         for (size_t i = 0; i < ends.size(); i++) {
           _vertices_other_pcollector.add_level(ends[i] - start);
-          if (_supports_geometry_instancing && _instance_count > 0) {
+          if (_instance_count != 1) {
             _glDrawArraysInstanced(GL_LINE_STRIP_ADJACENCY, first_vertex + start,
                                    ends[i] - start, _instance_count);
           } else {
@@ -5714,7 +5749,7 @@ draw_points(const GeomPrimitivePipelineReader *reader, bool force) {
         return false;
       }
 #ifndef OPENGLES_1
-      if (_supports_geometry_instancing && _instance_count > 0) {
+      if (_instance_count != 1) {
         _glDrawElementsInstanced(GL_POINTS, num_vertices,
                                  get_numeric_type(reader->get_index_type()),
                                  client_pointer, _instance_count);
@@ -5730,7 +5765,7 @@ draw_points(const GeomPrimitivePipelineReader *reader, bool force) {
       }
     } else {
 #ifndef OPENGLES_1
-      if (_supports_geometry_instancing && _instance_count > 0) {
+      if (_instance_count != 1) {
         _glDrawArraysInstanced(GL_POINTS,
                                reader->get_first_vertex(),
                                num_vertices, _instance_count);
@@ -5850,7 +5885,8 @@ prepare_texture(Texture *tex, int view) {
   report_my_gl_errors();
   // Make sure we'll support this texture when it's rendered.  Don't bother to
   // prepare it if we won't.
-  switch (tex->get_texture_type()) {
+  Texture::TextureType texture_type = tex->get_texture_type();
+  switch (texture_type) {
   case Texture::TT_3d_texture:
     if (!_supports_3d_texture) {
       GLCAT.warning()
@@ -5896,6 +5932,7 @@ prepare_texture(Texture *tex, int view) {
   }
 
   CLP(TextureContext) *gtc = new CLP(TextureContext)(this, _prepared_objects, tex, view);
+  gtc->_target = get_texture_target(texture_type);
   report_my_gl_errors();
 
   return gtc;
@@ -5987,6 +6024,48 @@ release_texture(TextureContext *tc) {
   }
 
   delete gtc;
+}
+
+/**
+ * Frees the GL resources previously allocated for the textures.  This function
+ * should never be called directly; instead, call Texture::release() (or
+ * simply let the Texture destruct).
+ */
+void CLP(GraphicsStateGuardian)::
+release_textures(const pvector<TextureContext *> &contexts) {
+  if (contexts.empty()) {
+    return;
+  }
+
+  GLuint *indices = (GLuint *)alloca(sizeof(GLuint) * contexts.size() * 2);
+  GLuint *buffers = indices + contexts.size();
+  size_t num_indices = 0;
+  size_t num_buffers = 0;
+
+  for (TextureContext *tc : contexts) {
+    CLP(TextureContext) *gtc = DCAST(CLP(TextureContext), tc);
+
+#ifndef OPENGLES_1
+    _textures_needing_fetch_barrier.erase(gtc);
+    _textures_needing_image_access_barrier.erase(gtc);
+    _textures_needing_update_barrier.erase(gtc);
+    _textures_needing_framebuffer_barrier.erase(gtc);
+#endif
+
+    indices[num_indices++] = gtc->_index;
+
+    if (gtc->_buffer != 0) {
+      buffers[num_buffers++] = gtc->_buffer;
+    }
+
+    delete gtc;
+  }
+
+  glDeleteTextures(num_indices, indices);
+
+  if (num_buffers > 0) {
+    _glDeleteBuffers(num_buffers, buffers);
+  }
 }
 
 /**
@@ -6162,7 +6241,7 @@ release_geom(GeomContext *gc) {
  */
 ShaderContext *CLP(GraphicsStateGuardian)::
 prepare_shader(Shader *se) {
-  PStatGPUTimer timer(this, _prepare_shader_pcollector);
+  PStatGPUTimer timer(this, se->get_prepare_shader_pcollector());
 
 #ifndef OPENGLES_1
   ShaderContext *result = nullptr;
@@ -6170,7 +6249,9 @@ prepare_shader(Shader *se) {
   switch (se->get_language()) {
   case Shader::SL_GLSL:
     if (_supports_glsl) {
+      push_group_marker(std::string("Prepare Shader ") + se->get_debug_name());
       result = new CLP(ShaderContext)(this, se);
+      pop_group_marker();
       break;
     } else {
       GLCAT.error()
@@ -6181,7 +6262,9 @@ prepare_shader(Shader *se) {
   case Shader::SL_Cg:
 #if defined(HAVE_CG) && !defined(OPENGLES)
     if (_supports_basic_shaders) {
+      push_group_marker(std::string("Prepare Shader ") + se->get_debug_name());
       result = new CLP(CgShaderContext)(this, se);
+      pop_group_marker();
       break;
     } else {
       GLCAT.error()
@@ -6368,6 +6451,52 @@ release_vertex_buffer(VertexBufferContext *vbc) {
   gvbc->_index = 0;
 
   delete gvbc;
+}
+
+/**
+ * Frees the GL resources previously allocated for the data.  This function
+ * should never be called directly; instead, call Data::release() (or simply
+ * let the Data destruct).
+ */
+void CLP(GraphicsStateGuardian)::
+release_vertex_buffers(const pvector<BufferContext *> &contexts) {
+  if (contexts.empty()) {
+    return;
+  }
+  nassertv(_supports_buffers);
+  bool debug = GLCAT.is_debug() && gl_debug_buffers;
+
+  GLuint *indices = (GLuint *)alloca(sizeof(GLuint) * contexts.size());
+  size_t num_indices = 0;
+
+  for (BufferContext *bc : contexts) {
+    CLP(VertexBufferContext) *gvbc = DCAST(CLP(VertexBufferContext), bc);
+
+    // Make sure the buffer is unbound before we delete it.  Not strictly
+    // necessary according to the OpenGL spec, but it might help out a flaky
+    // driver, and we need to keep our internal state consistent anyway.
+    if (_current_vbuffer_index == gvbc->_index) {
+      if (debug && GLCAT.is_spam()) {
+        GLCAT.spam()
+          << "unbinding vertex buffer " << gvbc->_index << "\n";
+      }
+      _glBindBuffer(GL_ARRAY_BUFFER, 0);
+      _current_vbuffer_index = 0;
+    }
+
+    if (debug) {
+      GLCAT.debug()
+        << "deleting vertex buffer " << gvbc->_index << "\n";
+    }
+
+    indices[num_indices++] = gvbc->_index;
+    gvbc->_index = 0;
+
+    delete gvbc;
+  }
+
+  _glDeleteBuffers(num_indices, indices);
+  report_my_gl_errors();
 }
 
 /**
@@ -6560,6 +6689,52 @@ release_index_buffer(IndexBufferContext *ibc) {
 }
 
 /**
+ * Frees the GL resources previously allocated for the data.  This function
+ * should never be called directly; instead, call Data::release() (or simply
+ * let the Data destruct).
+ */
+void CLP(GraphicsStateGuardian)::
+release_index_buffers(const pvector<BufferContext *> &contexts) {
+  if (contexts.empty()) {
+    return;
+  }
+  nassertv(_supports_buffers);
+  bool debug = GLCAT.is_debug() && gl_debug_buffers;
+
+  GLuint *indices = (GLuint *)alloca(sizeof(GLuint) * contexts.size());
+  size_t num_indices = 0;
+
+  for (BufferContext *bc : contexts) {
+    CLP(IndexBufferContext) *gibc = DCAST(CLP(IndexBufferContext), bc);
+
+    // Make sure the buffer is unbound before we delete it.  Not strictly
+    // necessary according to the OpenGL spec, but it might help out a flaky
+    // driver, and we need to keep our internal state consistent anyway.
+    if (_current_ibuffer_index == gibc->_index) {
+      if (debug && GLCAT.is_spam()) {
+        GLCAT.spam()
+          << "unbinding index buffer " << gibc->_index << "\n";
+      }
+      _glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+      _current_ibuffer_index = 0;
+    }
+
+    if (debug) {
+      GLCAT.debug()
+        << "deleting index buffer " << gibc->_index << "\n";
+    }
+
+    indices[num_indices++] = gibc->_index;
+    gibc->_index = 0;
+
+    delete gibc;
+  }
+
+  _glDeleteBuffers(num_indices, indices);
+  report_my_gl_errors();
+}
+
+/**
  * Internal function to bind a buffer object for the indicated primitive's
  * index list, if appropriate, or to unbind a buffer object if it should be
  * rendered from client memory.
@@ -6723,6 +6898,52 @@ release_shader_buffer(BufferContext *bc) {
   gbc->_index = 0;
 
   delete gbc;
+}
+
+/**
+ * Frees the GL resources previously allocated for the data.  This function
+ * should never be called directly; instead, call Data::release() (or simply
+ * let the Data destruct).
+ */
+void CLP(GraphicsStateGuardian)::
+release_shader_buffers(const pvector<BufferContext *> &contexts) {
+  if (contexts.empty()) {
+    return;
+  }
+  nassertv(_supports_buffers);
+  bool debug = GLCAT.is_debug() && gl_debug_buffers;
+
+  GLuint *indices = (GLuint *)alloca(sizeof(GLuint) * contexts.size());
+  size_t num_indices = 0;
+
+  for (BufferContext *bc : contexts) {
+    CLP(BufferContext) *gbc = DCAST(CLP(BufferContext), bc);
+
+    // Make sure the buffer is unbound before we delete it.  Not strictly
+    // necessary according to the OpenGL spec, but it might help out a flaky
+    // driver, and we need to keep our internal state consistent anyway.
+    if (_current_sbuffer_index == gbc->_index) {
+      if (debug && GLCAT.is_spam()) {
+        GLCAT.spam()
+          << "unbinding shader buffer " << gbc->_index << "\n";
+      }
+      _glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+      _current_sbuffer_index = 0;
+    }
+
+    if (debug) {
+      GLCAT.debug()
+        << "deleting shader buffer " << gbc->_index << "\n";
+    }
+
+    indices[num_indices++] = gbc->_index;
+    gbc->_index = 0;
+
+    delete gbc;
+  }
+
+  _glDeleteBuffers(num_indices, indices);
+  report_my_gl_errors();
 }
 #endif
 
@@ -7196,20 +7417,32 @@ framebuffer_copy_to_ram(Texture *tex, int view, int z,
     z_size = 1;
   }
 
+  int num_views = tex->get_num_views();
   if (tex->get_x_size() != w || tex->get_y_size() != h ||
       tex->get_z_size() != z_size ||
       tex->get_component_type() != component_type ||
       tex->get_format() != format ||
-      tex->get_texture_type() != texture_type) {
+      tex->get_texture_type() != texture_type ||
+      view >= num_views) {
 
-    // Re-setup the texture; its properties have changed.
-    tex->setup_texture(texture_type, w, h, z_size,
-                       component_type, format);
+    tex->setup_texture(texture_type, w, h, z_size, component_type, format);
+
+    // The above resets the number of views to 1, so set this back.
+    num_views = std::max(view + 1, num_views);
+    if (num_views > 1) {
+      tex->set_num_views(num_views);
+    }
   }
 
   nassertr(z < tex->get_z_size(), false);
 
   GLenum external_format = get_external_image_format(tex);
+
+  // OpenGL ES implementations may support BGRA, but that doesn't imply they
+  // also support it for glReadPixels specifically.
+  if (!_supports_bgra_read && external_format == GL_BGRA) {
+    external_format = GL_RGBA;
+  }
 
   if (GLCAT.is_spam()) {
     GLCAT.spam()
@@ -7276,6 +7509,7 @@ framebuffer_copy_to_ram(Texture *tex, int view, int z,
     }
     if (view > 0) {
       image_ptr += (view * tex->get_z_size()) * image_size;
+      nassertr(view < tex->get_num_views(), false);
     }
   }
 
@@ -8281,6 +8515,10 @@ make_shadow_buffer(LightLensNode *light, Texture *tex, GraphicsOutput *host) {
     flags |= GraphicsPipe::BF_size_square;
   }
 
+  if (host != nullptr) {
+    host = host->get_host();
+  }
+
   CLP(GraphicsBuffer) *sbuffer = new CLP(GraphicsBuffer)(get_engine(), get_pipe(), light->get_name(), fbp, props, flags, this, host);
   sbuffer->add_render_texture(tex, GraphicsOutput::RTM_bind_or_copy, GraphicsOutput::RTP_depth);
   get_engine()->add_window(sbuffer, light->get_shadow_buffer_sort());
@@ -8767,7 +9005,7 @@ do_get_extension_func(const char *) {
  */
 void CLP(GraphicsStateGuardian)::
 set_draw_buffer(int rbtype) {
-#ifndef OPENGLES  // Draw buffers not supported by OpenGL ES. (TODO!)
+#ifndef OPENGLES_1  // Draw buffers not supported by OpenGL ES 1.
   if (_current_fbo) {
     GLuint buffers[16];
     int nbuffers = 0;
@@ -8802,9 +9040,14 @@ set_draw_buffer(int rbtype) {
       }
       ++index;
     }
-    _glDrawBuffers(nbuffers, buffers);
+    if (_glDrawBuffers != nullptr) {
+      _glDrawBuffers(nbuffers, buffers);
+    } else {
+      nassertv(nbuffers == 1 && buffers[0] == GL_COLOR_ATTACHMENT0_EXT);
+    }
 
   } else {
+#ifndef OPENGLES
     switch (rbtype & RenderBuffer::T_color) {
     case RenderBuffer::T_front:
       glDrawBuffer(GL_FRONT);
@@ -8845,8 +9088,9 @@ set_draw_buffer(int rbtype) {
     default:
       break;
     }
-  }
 #endif  // OPENGLES
+  }
+#endif  // OPENGLES_1
 
   // Also ensure that any global color channels are masked out.
   set_color_write_mask(_color_write_mask);
@@ -8861,7 +9105,7 @@ set_draw_buffer(int rbtype) {
  */
 void CLP(GraphicsStateGuardian)::
 set_read_buffer(int rbtype) {
-#ifndef OPENGLES  // Draw buffers not supported by OpenGL ES. (TODO!)
+#ifndef OPENGLES_1  // Draw buffers not supported by OpenGL ES 1.
   if (rbtype & (RenderBuffer::T_depth | RenderBuffer::T_stencil)) {
     // Special case: don't have to call ReadBuffer for these.
     return;
@@ -8894,10 +9138,14 @@ set_read_buffer(int rbtype) {
       }
       ++index;
     }
+#ifdef OPENGLES
+    _glReadBuffer(buffer);
+#else
     glReadBuffer(buffer);
+#endif
 
   } else {
-
+#ifndef OPENGLES
     switch (rbtype & RenderBuffer::T_color) {
     case RenderBuffer::T_front:
       glReadBuffer(GL_FRONT);
@@ -8934,10 +9182,11 @@ set_read_buffer(int rbtype) {
     default:
       break;
     }
+#endif  // OPENGLES
   }
 
   report_my_gl_errors();
-#endif  // OPENGLES
+#endif  // OPENGLES_1
 }
 
 /**
@@ -9517,15 +9766,22 @@ get_external_image_format(Texture *tex) const {
 
   case Texture::F_rgba:
   case Texture::F_rgbm:
-  case Texture::F_rgba4:
-  case Texture::F_rgba5:
   case Texture::F_rgba8:
   case Texture::F_rgba12:
+    return _supports_bgr ? GL_BGRA : GL_RGBA;
+
+  case Texture::F_rgba4:
+  case Texture::F_rgba5:
   case Texture::F_rgba16:
   case Texture::F_rgba32:
   case Texture::F_srgb_alpha:
   case Texture::F_rgb10_a2:
+#ifdef OPENGLES
+    // OpenGL ES doesn't have sized BGRA formats.
+    return GL_RGBA;
+#else
     return _supports_bgr ? GL_BGRA : GL_RGBA;
+#endif
 
   case Texture::F_luminance:
 #ifdef OPENGLES
@@ -10046,9 +10302,9 @@ get_internal_image_format(Texture *tex, bool force_sized) const {
 
 #ifdef OPENGLES
   case Texture::F_rgba8:
-    return GL_RGBA8_OES;
+    return _supports_bgr ? GL_BGRA : GL_RGBA8_OES;
   case Texture::F_rgba12:
-    return force_sized ? GL_RGBA8 : GL_RGBA;
+    return _supports_bgr ? GL_BGRA : (force_sized ? GL_RGBA8 : GL_RGBA);
 #else
   case Texture::F_rgba8:
     if (Texture::is_unsigned(tex->get_component_type())) {
@@ -10281,11 +10537,9 @@ get_internal_image_format(Texture *tex, bool force_sized) const {
 
 #ifndef OPENGLES_1
   case Texture::F_srgb:
-#ifndef OPENGLES
-    return GL_SRGB8;
-#endif
+    return _supports_texture_srgb ? GL_SRGB8 : GL_RGB8;
   case Texture::F_srgb_alpha:
-    return GL_SRGB8_ALPHA8;
+    return _supports_texture_srgb ? GL_SRGB8_ALPHA8 : GL_RGBA8;
 #endif
 #ifndef OPENGLES
   case Texture::F_sluminance:
@@ -11167,7 +11421,8 @@ set_state_and_transform(const RenderState *target,
   _state_pcollector.add_level(1);
   PStatGPUTimer timer1(this, _draw_set_state_pcollector);
 
-  if (transform != _internal_transform) {
+  bool transform_changed = transform != _internal_transform;
+  if (transform_changed) {
     // PStatGPUTimer timer(this, _draw_set_state_transform_pcollector);
     _transform_state_pcollector.add_level(1);
     _internal_transform = transform;
@@ -11175,22 +11430,34 @@ set_state_and_transform(const RenderState *target,
   }
 
   if (target == _state_rs && (_state_mask | _inv_state_mask).is_all_on()) {
+#ifndef OPENGLES_1
+    if (transform_changed) {
+      // The state has not changed, but the transform has. Set the new
+      // transform on the shader, if we have one.
+      if (_current_shader_context != nullptr) {
+        _current_shader_context->set_state_and_transform(_state_rs, transform,
+          _scene_setup->get_camera_transform(), _projection_mat);
+      }
+    }
+#endif
     return;
   }
   _target_rs = target;
 
 #ifndef OPENGLES_1
   determine_target_shader();
-  _instance_count = _target_shader->get_instance_count();
+  _sattr_instance_count = _target_shader->get_instance_count();
 
   if (_target_shader != _state_shader) {
     do_issue_shader();
     _state_shader = _target_shader;
     _state_mask.clear_bit(TextureAttrib::get_class_slot());
+    _state_mask.set_bit(ShaderAttrib::get_class_slot());
   }
   else if (!has_fixed_function_pipeline() && _current_shader == nullptr) { // In the case of OpenGL ES 2.x, we need to glUseShader before we draw anything.
     do_issue_shader();
     _state_mask.clear_bit(TextureAttrib::get_class_slot());
+    _state_mask.set_bit(ShaderAttrib::get_class_slot());
   }
 
   // Update all of the state that is bound to the shader program.
@@ -12774,11 +13041,20 @@ upload_texture(CLP(TextureContext) *gtc, bool force, bool uses_mipmaps) {
     int num_levels = 1;
     CPTA_uchar image = tex->get_ram_mipmap_image(mipmap_bias);
 
+    bool can_generate = _supports_generate_mipmap;
+#if defined(OPENGLES) && !defined(OPENGLES_1)
+    // OpenGL ES doesn't support generating mipmaps for sRGB textures, so we
+    // have to do this on the CPU, unless we have a special extension.
+    if (internal_format == GL_SRGB8 || internal_format == GL_SRGB8_ALPHA8) {
+      can_generate = has_extension("GL_NV_generate_mipmap_sRGB");
+    }
+#endif
+
     if (image.is_null()) {
       // We don't even have a RAM image, so we have no choice but to let
       // mipmaps be generated on the GPU.
       if (uses_mipmaps) {
-        if (_supports_generate_mipmap) {
+        if (can_generate) {
           num_levels = tex->get_expected_num_mipmap_levels() - mipmap_bias;
           gtc->_generate_mipmaps = true;
         } else {
@@ -12794,7 +13070,7 @@ upload_texture(CLP(TextureContext) *gtc, bool force, bool uses_mipmaps) {
 
         if (num_levels <= 1) {
           // No RAM mipmap levels available.  Should we generate some?
-          if (!_supports_generate_mipmap || !driver_generate_mipmaps ||
+          if (!can_generate || !driver_generate_mipmaps ||
               image_compression != Texture::CM_off) {
             // Yes, the GL can't or won't generate them, so we need to.  Note
             // that some drivers (nVidia) will *corrupt memory* if you ask
@@ -12807,7 +13083,7 @@ upload_texture(CLP(TextureContext) *gtc, bool force, bool uses_mipmaps) {
         if (num_levels <= 1) {
           // We don't have mipmap levels in RAM.  Ask the GL to generate them
           // if it can.
-          if (_supports_generate_mipmap) {
+          if (can_generate) {
             num_levels = tex->get_expected_num_mipmap_levels() - mipmap_bias;
             gtc->_generate_mipmaps = true;
           } else {
@@ -13518,7 +13794,11 @@ upload_simple_texture(CLP(TextureContext) *gtc) {
   Texture *tex = gtc->get_texture();
   nassertr(tex != nullptr, false);
 
+#ifdef OPENGLES
+  GLenum internal_format = GL_BGRA;
+#else
   GLenum internal_format = GL_RGBA;
+#endif
   GLenum external_format = GL_BGRA;
 
   const unsigned char *image_ptr = tex->get_simple_ram_image();
@@ -13532,6 +13812,9 @@ upload_simple_texture(CLP(TextureContext) *gtc) {
     // If the GL doesn't claim to support BGR, we may have to reverse the
     // component ordering of the image.
     external_format = GL_RGBA;
+#ifdef OPENGLES
+    internal_format = GL_RGBA;
+#endif
     image_ptr = fix_component_ordering(bgr_image, image_ptr, image_size,
                                        external_format, tex);
   }
@@ -14073,9 +14356,7 @@ do_extract_texture_data(CLP(TextureContext) *gtc) {
 
 #ifndef OPENGLES_1
   case GL_SRGB:
-#ifndef OPENGLES
   case GL_SRGB8:
-#endif
     format = Texture::F_srgb;
     break;
   case GL_SRGB_ALPHA:
@@ -14263,7 +14544,17 @@ do_extract_texture_data(CLP(TextureContext) *gtc) {
     return false;
   }
 
-  tex->set_ram_image(image, compression, page_size);
+  int num_views = tex->get_num_views();
+  if (num_views == 1) {
+    // Replace the entire image, since we are modifying the only view.
+    tex->set_ram_image(image, compression, page_size);
+  } else {
+    // We're only modifying a single view, so we can't stomp all over the
+    // existing content.
+    PTA_uchar ram_image = tex->modify_ram_image();
+    nassertr(ram_image.size() == image.size() * num_views, false);
+    memcpy(ram_image.p() + image.size() * gtc->get_view(), image.p(), image.size());
+  }
 
   if (gtc->_uses_mipmaps) {
     // Also get the mipmap levels.
@@ -14279,7 +14570,12 @@ do_extract_texture_data(CLP(TextureContext) *gtc) {
                                  type, compression, n)) {
         return false;
       }
-      tex->set_ram_mipmap_image(n, image, page_size);
+      if (num_views == 1) {
+        tex->set_ram_mipmap_image(n, image, page_size);
+      } else {
+        PTA_uchar ram_mipmap_image = tex->modify_ram_mipmap_image(n);
+        memcpy(ram_mipmap_image.p() + image.size() * gtc->get_view(), image.p(), image.size());
+      }
     }
   }
 
@@ -14343,13 +14639,13 @@ extract_texture_image(PTA_uchar &image, size_t &page_size,
 #ifndef OPENGLES
   } else if (target == GL_TEXTURE_BUFFER) {
     // In the case of a buffer texture, we need to get it from the buffer.
-    image = PTA_uchar::empty_array(tex->get_expected_ram_mipmap_image_size(n));
+    image = PTA_uchar::empty_array(tex->get_expected_ram_mipmap_view_size(n));
     _glGetBufferSubData(target, 0, image.size(), image.p());
 #endif
 
   } else if (compression == Texture::CM_off) {
     // An uncompressed 1-d, 2-d, or 3-d texture.
-    image = PTA_uchar::empty_array(tex->get_expected_ram_mipmap_image_size(n));
+    image = PTA_uchar::empty_array(tex->get_expected_ram_mipmap_view_size(n));
     GLenum external_format = get_external_image_format(tex);
     GLenum pixel_type = get_component_type(type);
     glGetTexImage(target, n, external_format, pixel_type, image.p());
